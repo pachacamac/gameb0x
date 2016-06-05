@@ -40,3 +40,17 @@ Now run
 * bundle install
 * ruby server.rb
 * open browser at http://localhost:8888
+
+## Current Games
+
+### Icehockey
+
+A simple realtime icehockey game that works with an arbitrary number of players. As players join and leave, they get assigned in a way to create balanced sized teams. You can shoot goals, block the puck, bounce of the (currently rectangular) rink, and of course punch other players! Score is kept per team and per player.
+
+### Quizbuzzer
+
+A classic quiz show game where you have to answer questions. Like in "Who Wants to Be a Millionaire?" you see a question and get up to four choices. Unlike in the popular TV show this game can be played with as many players as you like. First you only see a buzzer button on your phone and the first who buzzes, then sees the answer buttons and has to choose an answer. A correct answer gives you a point, a wrong answer substracts a point and the other players get a chance.
+
+### ???
+
+Your awesome game idea! Open an issue for a cool idea or implement it and send a pull request! I'd love to see some collaboration here!
