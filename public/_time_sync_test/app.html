@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>time_sync_test</title>
+<style>
+  * { padding: 0; margin: 0; }
+  canvas { background: #eee; display: block; margin: 0 auto; }
+</style>
+</head>
+<body>
+<textarea id="debug" rows="20" cols="120"></textarea>
+<script src="../chansock.js"></script>
+<script>
+  /*
+  Client stamps current local time on a "time request" packet and sends to server
+  Upon receipt by server, server stamps server-time and returns
+  Upon receipt by client, client subtracts current time from sent time and divides by two to compute latency. It subtracts current time from server time to determine client server time delta and adds in the half-latency to get the correct clock delta.
+  (So far this algothim is very similar to SNTP)
+
+  The first result should immediately be used to update the clock since it will get the local clock into at least the right ballpark (at least the right timezone!)
+  The client repeats steps 1 through 3 five or more times, pausing a few seconds each time. Other traffic may be allowed in the interim, but should be minimized for best results
+  The results of the packet receipts are accumulated and sorted in lowest-latency to highest-latency order. The median latency is determined by picking the mid-point sample from this ordered list.
+  All samples above approximately 1 standard-deviation from the median are discarded and the remaining samples are averaged using an arithmetic mean.
+  */
+
+  function log(s){
+    document.getElementById('debug').value += JSON.stringify(s) + "\n";
+    console.log(s);
+  }
+
+  var sock = createChannelSocket();
+
+  var clients = [];
+  function findClientIndexById(id){ return clients.findIndex(function(e){return e.id == id}); }
+
+  sock.onopen = function(){
+    sock.on('connect', function(d,f,c,e){
+      log(f+' connected');
+      clients.push({id: f});
+    });
+
+    sock.on('disconnect', function(d,f,c,e){
+      log(f+' disconnected');
+      clients.splice(findClientIndexById(f), 1);
+    });
+
+    sock.on('timeRequest', function(d,f,c,e){
+      log(f+' timeRequest '+d.time);
+      //findClientIndexById(f)
+
+    });
+  };
+
+</script>
+</body>
+</html>

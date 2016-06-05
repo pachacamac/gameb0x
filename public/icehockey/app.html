@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Hockey</title>
+<style>
+  * { padding: 0; margin: 0; }
+  canvas { background: #eee; display: block; margin: 0 auto; }
+  #pause { position: absolute; left: 10px; top: 40px; }
+  #step { position: absolute; left: 10px; top: 60px; }
+</style>
+</head>
+<body>
+<canvas id="canvas" width="800" height="600" style="background: url(img/ice2.jpg);"></canvas>
+<button id="pause">pause</button>
+<button id="step">step</button>
+<script src="../chansock.js"></script>
+<script src="../buzz.js"></script>
+<script src="../gb0x.js"></script>
+<script>
+  var canvas = document.getElementById("canvas");
+  var ctx = canvas.getContext("2d");
+
+  var gb0x = GB0X({canvas: canvas});
+
+  var leftGoalBox = [], rightGoalBox = [];
+
+  gb0x.autoAdaptCanvas(function(){
+    leftGoalBox = [canvas.width*0.1-canvas.width*0.01, canvas.height*0.5-canvas.height*0.05,
+                   canvas.width*0.1+canvas.width*0.01, canvas.height*0.5+canvas.height*0.05];
+    rightGoalBox = [canvas.width*0.9-canvas.width*0.01, canvas.height*0.5-canvas.height*0.05,
+                    canvas.width*0.9+canvas.width*0.01, canvas.height*0.5+canvas.height*0.05];
+  });
+
+  var images = {
+    'team1-idle':   gb0x.loadImage('img/team1-idle.png'),
+    'team1-skate1': gb0x.loadImage('img/team1-skate1.png'),
+    'team1-skate2': gb0x.loadImage('img/team1-skate2.png'),
+    'team1-attack': gb0x.loadImage('img/team1-attack.png'),
+    'team1-down':   gb0x.loadImage('img/team1-down.png'),
+    'team2-idle':   gb0x.loadImage('img/team2-idle.png'),
+    'team2-skate1': gb0x.loadImage('img/team2-skate1.png'),
+    'team2-skate2': gb0x.loadImage('img/team2-skate2.png'),
+    'team2-attack': gb0x.loadImage('img/team2-attack.png'),
+    'team2-down':   gb0x.loadImage('img/team2-down.png'),
+    'goal':         gb0x.loadImage('img/goal.png'),
+    'rink_mask':    gb0x.loadImage('img/rink_mask.png'),
+  };
+  var animations = {
+    'skate1': gb0x.createAnimation([images['team1-skate1'], images['team1-skate2']], 500),
+    'skate2': gb0x.createAnimation([images['team2-skate1'], images['team2-skate2']], 500),
+  };
+  var sounds = {
+    'punch':   gb0x.loadSound('snd/punch.mp3'),
+    'jingle':  gb0x.loadSound('snd/jingle.mp3'),
+    'fanfare': gb0x.loadSound('snd/fanfare.mp3'),
+    'boo':     gb0x.loadSound('snd/boo.mp3'),
+    'bump1':   gb0x.loadSound('snd/bump1.mp3'),
+    'bump2':   gb0x.loadSound('snd/bump2.mp3'),
+    'break':   gb0x.loadSound('snd/break.mp3'),
+  };
+  var score = {
+    'Team yellow': 0,
+    'Team red': 0
+  };
+
+  var rinkMask;
+  images['rink_mask'].onload = function(){
+    rinkMask = gb0x.createMask(images['rink_mask']);
+  }
+
+  sounds['fanfare'].play();
+
+  function vec2angle(){
+    return (Math.atan2(this.vy, this.vx)*gb0x.TO_DEG) + 90;
+  }
+
+  var gameObjects = [];
+
+  gameObjects.push({
+    id: 'puck',
+    type: 'puck',
+    x: canvas.width/2,
+    y: canvas.height/2,
+    vx: 0,
+    vy: 0,
+    radius: 8,
+    weight: 5,
+    restitution: 0.75,
+    last_player_id: null,
+    held_by_id: null
+    //angle: vec2angle,
+  });
+
+  var EPSILON = 0.0001;
+
+  function findGameObjectIndexById(id){ return gameObjects.findIndex(function(e){return e.id == id}); }
+  function findGameObjectById(id){ return gameObjects.find(function(e){return e.id == id}); }
+
+  function closestFromOtherTeam(player){
+    var other, d, dist=1/0; //infinity
+    for(var i=0;i<gameObjects.length;i++){
+      if(gameObjects[i]!=player && gameObjects[i].team != player.team){
+        d = gb0x.distance(gameObjects[i], player);
+        if(d<dist){
+          other = gameObjects[i];
+          dist = d;
+        }
+      }
+    }
+    return [other, dist];
+  }
+
+  function weakestTeam(teams){
+    teams = teams || {};
+    var weakest, weakestCount=1/0; //infinity
+    for(var i=0; i<gameObjects.length; i++){
+      if(gameObjects[i].team === undefined) continue;
+      if(teams[gameObjects[i].team]) teams[gameObjects[i].team]++;
+      else teams[gameObjects[i].team] = 1;
+    }
+    console.log(teams);
+    for(var k in teams){
+      if(teams[k] <= weakestCount){
+        weakestCount = teams[k];
+        weakest = k;
+      }
+    }
+    return weakest;
+  }
+
+  /* Socket events */
+  var sock = createChannelSocket();
+  sock.onclose = function(){ console.log('disconnected') }; /*e.g. reload page later*/
+  sock.onopen = function(){
+    console.log('connected');
+
+    sock.on('connect', function(d,f,c){ /* player connected, let's add him to the game */
+      console.log('player connected: '+f);
+      gameObjects.push({
+        id: f,
+        type: 'player',
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        vx: 0, // velocity
+        vy: 0,
+        vxd: 0, // velocity delta e.g. used for speeding up slowly
+        vyd: 0,
+        angle: vec2angle,
+        radius: 25,
+        //velocity: 0,
+        weight: 80,
+        goals: 0,
+        team: weakestTeam({1:0, 2:0}),
+        state: null,
+        username: 'Player_'+gameObjects.length
+      });
+    });
+
+    sock.on('disconnect', function(d,f,c){ /* player disconnected, let's remove him from the game */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      console.log('player disconnected: '+f);
+      gameObjects.splice(i,1);
+    });
+
+    sock.on('movement', function(d,f,c){ /* player sent movement command */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      if(gameObjects[i].state=='knocked out') return;
+      gameObjects[i].vxd = d.vxd;
+      gameObjects[i].vyd = d.vyd;
+    });
+
+    sock.on('punch', function(d,f,c){ /* player punches */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      if(gameObjects[i].state != 'punching'){
+        gameObjects[i].state = 'punching';
+        setTimeout(function(){gameObjects[i].state = null}, 250);
+        var closest = closestFromOtherTeam(gameObjects[i]);
+        if(closest[1] < gameObjects[i].radius*3){
+          closest[0].state = 'knocked out';
+          findGameObjectById('puck').held_by_id = null;
+          setTimeout(function(){closest[0].state = null}, 3000);
+        }
+      }
+    });
+
+    sock.on('hold', function(d,f,c){ /* player tries to hold the puck */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      var j = findGameObjectIndexById('puck'); if(j==-1)return;
+      if(gb0x.distance(gameObjects[i], gameObjects[j]) < gameObjects[i].radius*2.5){
+        console.log('hold puck')
+        gameObjects[i].state = 'holding puck';
+        gameObjects[j].held_by_id = gameObjects[i].id;
+        gameObjects[j].last_player_id = gameObjects[i].id;
+      }else{
+        console.log('puck too far')
+      }
+    });
+
+    sock.on('shoot', function(d,f,c){ /* player tries to shoot the puck */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      var j = findGameObjectIndexById('puck'); if(j==-1)return;
+      if(gameObjects[i].state == 'holding puck' && gb0x.distance(gameObjects[i], gameObjects[j]) < gameObjects[i].radius*2.5){
+        gameObjects[i].state = null;
+        var player = findGameObjectById(gameObjects[j].held_by_id);
+        var normalizedVelocity = gb0x.normalizeVector(player.vx, player.vy);
+        gameObjects[j].vx = normalizedVelocity[0] * 20;
+        gameObjects[j].vy = normalizedVelocity[1] * 20;
+        gameObjects[j].held_by_id = null;
+        console.log('shooting puck!');
+      }else{
+        console.log('not holding puck or puck too far');
+      }
+    });
+
+    sock.on('username', function(d,f,c){ /* player wants to set/change his username */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      gameObjects[i].username = d.username;
+    });
+  };
+
+  /* Helper functions */
+  function circle(x,y,r,fc,sc,lw, from, to, anticlockwise){
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, r, from || 0, to || 2 * Math.PI, anticlockwise || false);
+    ctx.fillStyle = fc;
+    ctx.fill();
+    ctx.lineWidth = lw || 1;
+    ctx.strokeStyle = sc;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function line(x1,y1,x2,y2, color, width){
+    ctx.save();
+    ctx.fillStyle = color||'#000';
+    ctx.strokeStyle = color||'#000';
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineWidth = width||1;
+    ctx.stroke();
+    ctx.closePath();
+    ctx.restore();
+  }
+
+  function rect(x1,y1,x2,y2, color, width){
+    ctx.save();
+    ctx.beginPath();
+    ctx.fillStyle = color||'#000';
+    ctx.strokeStyle = color||'#000';
+    ctx.lineWidth = width||1;
+    ctx.rect(x1,y1,x2-x1,y2-y1);
+    ctx.stroke();
+    ctx.closePath();
+    ctx.restore();
+  }
+
+  function centeredText(text, x, y, c, font){
+    ctx.save();
+    ctx.font = font || "16px Arial";
+    ctx.fillStyle = c || "#0095DD";
+    ctx.fillText(text, x - ctx.measureText(text).width / 2, y);
+    ctx.restore();
+  }
+
+  function between(min,max,x){ return Math.min(Math.max(x, min), max) }
+
+  /* Game loop! */
+  var runner = gb0x.createRunner(function(){
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // ctx.globalAlpha = 0.5;
+    // ctx.drawImage(images['rink_mask'], 0, 0, canvas.width, canvas.height);
+    // ctx.globalAlpha = 1;
+
+    //middle circle
+    circle(canvas.width*0.5, canvas.height*0.5, canvas.height*0.14,  'transparent', 'rgba(66,66,255,0.3)', 4);
+    //left goal half circle
+    circle(canvas.width*0.11, canvas.height*0.5, canvas.height*0.14, 'transparent', 'rgba(255,66,66,0.3)', 4, 270*gb0x.TO_RAD, 90*gb0x.TO_RAD);
+    //right goal half circle
+    circle(canvas.width*0.89, canvas.height*0.5, canvas.height*0.14, 'transparent', 'rgba(255,66,66,0.3)', 4, 90*gb0x.TO_RAD, 270*gb0x.TO_RAD);
+
+    line(canvas.width*0.5,  0, canvas.width*0.5,  canvas.height, 'rgba(255,66,66,0.3)', 4);
+    line(canvas.width*0.11, 0, canvas.width*0.11, canvas.height, 'rgba(255,66,66,0.3)', 4);
+    line(canvas.width*0.89, 0, canvas.width*0.89, canvas.height, 'rgba(255,66,66,0.3)', 4);
+    line(canvas.width*0.305, 0, canvas.width*0.305, canvas.height, 'rgba(66,66,255,0.3)', 4);
+    line(canvas.width*0.695, 0, canvas.width*0.695, canvas.height, 'rgba(66,66,255,0.3)', 4);
+
+    /* detect collisions */
+    var collisions = gb0x.collisions(gameObjects, gb0x.circleCollision);
+    for(var i=0; i<collisions.length; i++){
+      var objA = gameObjects[collisions[i][0]], objB = gameObjects[collisions[i][1]];
+      if(objA.id=='puck'){
+        objA.last_player_id = objB.id;
+      }else if(objB.id=='puck'){
+        objB.last_player_id = objA.id;
+      }else{
+        sounds['bump2'].play();
+      }
+      var cr = gb0x.collisionResolver(objA, objB);
+      objA.x = cr.p1[0];
+      objA.y = cr.p1[1];
+      objB.x = cr.p2[0];
+      objB.y = cr.p2[1];
+      objA.vx = cr.v1[0];
+      objA.vy = cr.v1[1];
+      objB.vx = cr.v2[0];
+      objB.vy = cr.v2[1];
+    }
+
+    /* handle all game objects */
+    for(var i=0; i<gameObjects.length; i++){
+      var obj = gameObjects[i];
+
+      if(obj.type == 'player'){
+        //circle(obj.x, obj.y, obj.radius, 'transparent', '#0f0', 2);
+        centeredText(obj.username+' ('+obj.goals+')', obj.x, obj.y - 30);
+        if(obj.state == 'punching'){
+          gb0x.drawImage(images['team'+obj.team+'-attack'], obj.x, obj.y, obj.angle());
+        } else if(obj.state == 'knocked out'){
+          gb0x.drawImage(images['team'+obj.team+'-down'], obj.x, obj.y, obj.angle());
+        } else {
+          if(Math.abs(obj.vx) + Math.abs(obj.vy) > 2)
+            gb0x.drawAnimation(animations['skate'+obj.team], obj.x, obj.y, obj.angle());
+          else
+            gb0x.drawImage(images['team'+obj.team+'-idle'], obj.x, obj.y, obj.angle());
+        }
+        obj.vx = between(-6, 6, obj.vx + obj.vxd);
+        obj.vy = between(-6, 6, obj.vy + obj.vyd);
+      } else if(obj.type == 'puck'){
+        circle(obj.x, obj.y, obj.radius, '#111', '#333', 4);
+        if(obj.held_by_id){
+          var player = findGameObjectById(obj.held_by_id);
+          if(player){
+            obj.vx = player.vx;
+            obj.vy = player.vy;
+
+            var angle = (player.angle() - 45) * gb0x.TO_RAD;
+            obj.x = player.x + Math.cos(angle) * 45;
+            obj.y = player.y + Math.sin(angle) * 45;
+          } else {
+            obj.held_by_id = null;
+          }
+        }
+        //Check goals
+        var player;
+        if(gb0x.inBox(obj.x, obj.y, leftGoalBox[0], leftGoalBox[1], leftGoalBox[2], leftGoalBox[3])){
+          player = findGameObjectById(obj.last_player_id);
+          if(player.team == 1){
+            player.goals += 1;
+            sounds['jingle'].play();
+          } else {
+            sounds['boo'].play();
+          }
+          score['Team yellow'] += 1;
+          obj.x = canvas.width/2; obj.y = canvas.height/2; obj.vx = 0; obj.vy = 0;
+        }else if(gb0x.inBox(obj.x, obj.y, rightGoalBox[0], rightGoalBox[1], rightGoalBox[2], rightGoalBox[3])){
+          player = findGameObjectById(obj.last_player_id);
+          if(player.team == 2){
+            player.goals += 1;
+            sounds['jingle'].play();
+          } else {
+            sounds['boo'].play();
+          }
+          score['Team red'] += 1;
+          obj.x = canvas.width/2; obj.y = canvas.height/2; obj.vx = 0; obj.vy = 0;
+        }
+      }
+
+
+      // if(rinkMask){
+      //   var maskCollision = gb0x.maskCollision( obj, rinkMask );
+      //   if(maskCollision){
+      //     //console.log(maskCollision);
+      //     var magnitude = gb0x.vectorMagnitude(obj.vx, obj.vy);
+      //     //obj.x += obj.vx * -magnitude;
+      //     //obj.y += obj.vy * -magnitude;
+      //     obj.x = maskCollision[1][0];
+      //     obj.y = maskCollision[1][1];
+      //     obj.vx = maskCollision[0][0] * magnitude;
+      //     obj.vy = maskCollision[0][1] * magnitude;
+      //     //console.log(obj.vx, obj.vy);
+      //   }
+      // }
+
+      if(obj.x >= canvas.width || obj.x <= 0){
+        obj.vx *= -1;
+        obj.x = between(0, canvas.width, obj.x);
+      }
+      if(obj.y >= canvas.height || obj.y <= 0){
+        obj.vy *= -1;
+        obj.y = between(0, canvas.height, obj.y);
+      }
+
+      if((obj.vx < -EPSILON || obj.vx > EPSILON) || (obj.vy < -EPSILON || obj.vy > EPSILON)){
+        obj.x += obj.vx;
+        obj.y += obj.vy;
+        obj.vx *= 0.99;
+        obj.vy *= 0.99;
+      }
+    }
+
+    gb0x.drawImage(images['goal'], canvas.width*0.1, canvas.height*0.5, 0, canvas.width*0.03, canvas.height*0.14);
+    gb0x.drawImage(images['goal'], canvas.width*0.9, canvas.height*0.5, 180, canvas.width*0.03, canvas.height*0.14);
+    // rect(leftGoalBox[0], leftGoalBox[1], leftGoalBox[2], leftGoalBox[3], 'red', 3);
+    // rect(rightGoalBox[0], rightGoalBox[1], rightGoalBox[2], rightGoalBox[3], 'red', 3);
+
+    centeredText('Team yellow: '+score['Team yellow'], canvas.width*0.25, 20, '#AA0', '25px Arial');
+    centeredText('Team red: '+score['Team red'], canvas.width*0.75, 20, '#A00', '25px Arial');
+    if(runner){ ctx.fillText(runner.fps()+' fps', 20, 20) }
+  }, 50).run();
+
+  document.getElementById('pause').addEventListener('click', function(){
+    runner.toggle();
+  });
+
+  document.getElementById('step').addEventListener('click', function(){
+    runner.step();
+  });
+
+</script>
+</body>
+</html>

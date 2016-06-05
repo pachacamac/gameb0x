@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Spectator</title>
+<style>
+  * { padding: 0; margin: 0; box-sizing: border-box; }
+  html,body { height: 100%; margin: 0px; padding: 0px; }
+  #display { width: 100%; height: 100%; min-width: 100%; min-height: 100%; z-index: 999;}
+</style>
+</head>
+<body>
+<img id="display" alt="" src="" />
+<script src="../spectator.js"></script>
+<script>
+  var spectator = Spectator();
+  spectator.receiveUpdates(document.getElementById('display'));
+</script>
+</body>
+</html>

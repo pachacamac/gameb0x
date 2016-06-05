@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name='viewport' content='user-scalable=no, width=device-width, initial-scale=1.0, maximum-scale=1.0' />
+<title>Controller</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { overflow: hidden; }
+  button { font-weight: bold; font-family: arial; font-size: 2em; }
+  #punch-btn {
+    position: absolute;
+    left: 50vw; top: 0;
+    width: 50vw; height: 50vh;
+  }
+  #hold-shoot-btn {
+    position: absolute;
+    left: 50vw; top: 50vh;
+    width: 50vw; height: 50vh;
+  }
+  #nipple-area {
+    position: absolute;
+    left: 0; top: 0;
+    width: 50vw; height: 100vh;
+    background: black;
+  }
+</style>
+</head>
+<body>
+
+<div id='nipple-area'></div>
+<button id='punch-btn'>punch</button>
+<button id='hold-shoot-btn'>hold/shoot</button>
+
+<script src="../settings.js"></script>
+<script src="../nipplejs.min.js"></script>
+<script src="../chansock.js"></script>
+<script>
+  var sock = createChannelSocket();
+  var settingsHelper = SettingsHelper();
+
+  sock.onopen = function(){
+    console.log('connected');
+    var username = settingsHelper.getSetting('username');
+    if(username) sock.send( {username: username}, 'username');
+  };
+
+  sock.onclose = function(){ console.log('disconnected') }; // e.g. reload page later
+
+  settingsHelper.addItem('username', function(){
+    var username = settingsHelper.changeSetting('username');
+    if(username !== null){ sock.send({username: username}, 'username') }
+  });
+
+  function punch(e){ e.preventDefault(); sock.send({}, 'punch') }
+  document.getElementById('punch-btn').addEventListener('click', punch);
+  document.getElementById('punch-btn').addEventListener('touchstart', punch);
+
+  function hold(e){ e.preventDefault(); sock.send({}, 'hold') }
+  document.getElementById('hold-shoot-btn').addEventListener('mousedown', hold);
+  document.getElementById('hold-shoot-btn').addEventListener('touchstart', hold);
+
+  function shoot(e){ e.preventDefault(); sock.send({}, 'shoot') }
+  document.getElementById('hold-shoot-btn').addEventListener('mouseup', shoot);
+  document.getElementById('hold-shoot-btn').addEventListener('touchend', shoot);
+
+
+  var nipple = nipplejs.create({
+    zone: document.getElementById('nipple-area'),
+    mode: 'dynamic',
+    color: 'red',
+    size: 150
+  });
+
+  var TO_RAD = Math.PI / 180.0;
+
+  function angle2xy(angle){
+    angle = angle*TO_RAD;
+    return [Math.cos(angle), -Math.sin(angle)];
+  }
+  function between(min,max,x){ return Math.min(Math.max(x, min), max) }
+
+  var xdyd, forceMultiplier, lastAngle = 1/0, lastForce = 1/0;
+
+  sock.batchTime(50);
+
+  nipple.on('move', function (e, data) {
+    if(data.direction &&
+       (Math.abs(data.angle.degree - lastAngle) >= 10 || Math.abs(data.force - lastForce) > 1) //limit packets and batch size
+      ){
+      lastAngle = data.angle.degree;
+      lastForce = data.force;
+      forceMultiplier = Math.min(data.force/4, 0.5);
+      xdyd = angle2xy(data.angle.degree);
+      sock.sendBatched( //limit number of packets per second
+        {vxd: xdyd[0]*forceMultiplier, vyd: xdyd[1]*forceMultiplier},
+        'movement'
+      );
+    }
+  }).on('end', function (e, data) {
+    lastAngle = 1/0;
+    lastForce = 1/0;
+    sock.sendBatched( //limit number of packets per second
+      {vxd: 0, vyd: 0},
+      'movement'
+    );
+  });
+</script>
+
+</body>
+</html>

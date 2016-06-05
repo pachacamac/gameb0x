@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>socket test</title>
+<style>
+  * { padding: 0; margin: 0; }
+  canvas { background: #eee; display: block; margin: 0 auto; }
+</style>
+</head>
+<body>
+<textarea id="debug" rows="10" cols="120"></textarea>
+<button id="moveBtn">move</button>
+<button id="moveMultiBtn">move multi</button>
+<script src="../chansock.js"></script>
+<script>
+  function log(s){
+    document.getElementById('debug').value += JSON.stringify(s) + "\n";
+    console.log(s);
+  }
+
+  var sock = createChannelSocket();
+
+  document.getElementById('moveBtn').addEventListener('click', function(){
+    console.log('clicky');
+    sock.send({x: 1, y: 0}, 'move');
+  });
+
+  document.getElementById('moveMultiBtn').addEventListener('click', function(){
+    console.log('clicky multi');
+    sock.sendMultiple([
+      [{x: 2, y: 2}, 'move'],
+      [{x: 3, y: 3}, 'move']
+    ]);
+  });
+
+  //function chanHandler(d,f,c){ log({channel: c, from: f, data: d}) }
+
+  sock.onopen = function(){
+    log('connected');
+    //sock.on('message',    chanHandler);
+  };
+  sock.onclose = function(){ log('disconnected') };
+</script>
+</body>
+</html>

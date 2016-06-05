@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>QuizBuzzer</title>
+<style>
+  * { padding: 0; margin: 0; box-sizing: border-box; }
+  html,body { height: 100%; margin: 0px; padding: 0px; }
+  #user-list { position: absolute; right: 0; width: 20%; height: 100%; background: #E4E6C3; }
+  #user-list li { padding: .5em; text-align: center; font-size: 4vh; list-style-type: none; margin-bottom: 1px; }
+  #user-list li.list-head { background: #191816; color: #E4E6C3; font-weight: bold; }
+  #user-list li.user { background: #D3EA77; color: #191816; }
+  #user-list li.user.selected { background: #D377EA; }
+  #category { position: absolute; right: 0; bottom: 0; width: 20%; font-size: 4vh; }
+  #question-box { position: absolute; width: 80%; height: 100%; }
+  #question {
+    position: absolute; width: 100%; height: 25%; background: #F07D5A; color: #191816;
+    display:flex; justify-content:center; align-items:center; font-size: 6vh;
+  }
+  #choices { position: absolute; bottom: 0; width: 100%; height: 75%; background: #809BCE; color: #191816; }
+  .choice {
+    position: relative; width: 50%; height: 50%; border: 1px solid gray; float: left;
+    display:flex; justify-content:center; align-items:center; font-size: 5vh;
+  }
+  .choice.selected { background: #CE809B; }
+</style>
+</head>
+<body>
+
+
+<div id="question-box">
+  <div id="question"></div>
+  <div id="choices"></div>
+</div>
+<ul id="user-list">
+  <li class="list-head">Players</li>
+</ul>
+<select id="category">
+  <option value="general">general</option>
+  <option value="animals">animals</option>
+  <option value="brain-teasers">brain-teasers</option>
+  <option value="celebrities">celebrities</option>
+  <option value="entertainment">entertainment</option>
+  <option value="for-kids">for-kids</option>
+  <option value="geography">geography</option>
+  <option value="history">history</option>
+  <option value="hobbies">hobbies</option>
+  <option value="humanities">humanities</option>
+  <option value="literature">literature</option>
+  <option value="movies">movies</option>
+  <option value="music">music</option>
+  <option value="newest">newest</option>
+  <option value="people">people</option>
+  <option value="rated">rated</option>
+  <option value="religion-faith">religion-faith</option>
+  <option value="science-technology">science-technology</option>
+  <option value="sports">sports</option>
+  <option value="television">television</option>
+  <option value="video-games">video-games</option>
+  <option value="world">world</option>
+</select>
+
+<script src="../chansock.js"></script>
+<script src="../buzz.js"></script>
+<script src="../gb0x.js"></script>
+<script src="../jab.js"></script>
+
+<script src="../spectator.js"></script>
+<script>
+  var gb0x = GB0X();
+  //var spectator = Spectator();
+  //setInterval(spectator.sendUpdate, 1000);
+
+  var sounds = {
+    'intro':    gb0x.loadSound('snd/intro.mp3'),
+    'wrong':    gb0x.loadSound('snd/wrong.mp3'),
+    'correct':  gb0x.loadSound('snd/correct.mp3'),
+    'buzzer':   gb0x.loadSound('snd/buzzer.mp3'),
+    'ticktock': gb0x.loadSound('snd/ticktock.mp3'),
+  };
+
+  var gameObjects = [];
+  var gameState = {round: 0};
+
+  var questions = [];
+
+  function hasClass(e, c){ return e.className.match(new RegExp('\\b'+c+'\\b', 'i')) }
+  function addClass(e, c){ return hasClass(e, c) ? null : e.className += ' '+c };
+  function removeClass(e, c){ return e.className = e.className.replace(new RegExp('\\b'+c+'\\b', 'i'), '') };
+
+  function findElementByText(selector, text){
+    var elems = document.querySelectorAll(selector);
+    for(var i=0; i<elems.length; i++){ if(elems[i].textContent == text) return elems[i]; }
+    return null;
+  }
+
+  function showNextQuestion(){
+    //debugger;
+    gameState.state = 'openQuestion';
+    gameState.player = null;
+    gameState.question = questions[Math.floor(Math.random()*questions.length)];
+    gameState.round += 1;
+
+    var questionElem = document.querySelector('#question');
+    questionElem.innerText = gameState.question.question;
+
+    var choicesElem = document.querySelector('#choices');
+
+    console.log(gameState.question.choices);
+
+    var choices = document.querySelectorAll('.choice');
+    for(var i=0; i<choices.length; i++){ choices[i].parentNode.removeChild(choices[i]); }
+    for(var i=0; i<gameState.question.choices.length; i++){
+      var item = document.createElement('div');
+      item.className = 'choice';
+      item.innerText = gameState.question.choices[i];
+      choicesElem.appendChild(item);
+    }
+
+    //sounds['ticktock'].loop().play();
+    sounds['ticktock'].play();
+  }
+
+  function loadCategory(c){
+    if(c instanceof Event){ c = c.target.value; }
+    gb0x.ajax({
+      method: 'GET',
+      url: 'questions/'+c+'.json?'+Date.now(),
+      success: function(data){
+        questions = JSON.parse(data);
+        showNextQuestion();
+      }
+    });
+  }
+  loadCategory('general');
+
+  document.getElementById('category').addEventListener('change', loadCategory);
+
+  function findGameObjectIndexById(id){ return gameObjects.findIndex(function(e){return e.id == id}); }
+  function findGameObjectById(id){ return gameObjects.find(function(e){return e.id == id}); }
+
+  /* Socket events */
+  var sock = createChannelSocket();
+  sock.onclose = function(){ console.log('disconnected') }; /*e.g. reload page later*/
+  sock.onopen = function(){
+    console.log('connected');
+
+    sock.on('connect', function(d,f,c){ /* player connected, let's add him to the game */
+      console.log('player connected: '+f);
+
+      name = 'Player_'+gameObjects.length;
+      gameObjects.push({
+        id: f,
+        type: 'player',
+        points: 0,
+        username: name,
+        state: ''
+      });
+      var uidx = findGameObjectIndexById(f);
+
+      var item = document.createElement('li');
+      item.className = 'user';
+      item.setAttribute('id', 'user_'+f);
+      document.querySelector('#user-list').appendChild(item);
+
+      jab.bindVar(gameObjects[uidx], ['username', 'points'], function(){
+        gameObjects[uidx].displayText = gameObjects[uidx].username+" ("+gameObjects[uidx].points+")"
+      });
+      jab.bind(gameObjects[uidx], 'displayText', item);
+      //jab.bind(gameObjects[uidx], 'name', document.getElementById('input'), {func: myFunc});
+    });
+
+    sock.on('disconnect', function(d,f,c){ /* player disconnected, let's remove him from the game */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      console.log('player disconnected: '+f);
+      var item = document.querySelector('#user_'+f);
+      item.parentNode.removeChild(item);
+      gameObjects.splice(i,1);
+    });
+
+    sock.on('username', function(d,f,c){ /* player wants to set/change his username */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      gameObjects[i].username = d.username;
+    });
+
+    sock.on('buzz', function(d,f,c){ /* player buzzed */
+      console.log('buzz');
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      if(gameState.state != 'openQuestion') return;
+      console.log('buzzedFirst: '+f);
+      sock.send({buzzedFirst: f, choices: gameState.question.choices}, 'buzzResult');
+      sounds['ticktock'].stop();
+      sounds['buzzer'].play();
+      gameState.state = 'playerBuzzed';
+      gameState.player = f;
+      addClass(document.querySelector('#user_'+f), 'selected');
+      //do more
+    });
+
+    sock.on('answer', function(d,f,c){ /* player answers */
+      var i = findGameObjectIndexById(f); if(i==-1)return;
+      if(gameState.state != 'playerBuzzed') return;
+      if(gameState.player != f) return;
+      console.log(d, gameState);
+      var selectedAnswer = findElementByText('.choice', d.answer);
+      addClass(selectedAnswer, 'selected');
+      if(d.answer == gameState.question.answer){
+        sounds['correct'].play();
+        gameObjects[i].points++;
+        setTimeout(function(){
+          var choices = document.querySelectorAll('.choice');
+          for(var i=0;i<choices.length;i++){ removeClass(choices[i], 'selected'); }
+          var users = document.querySelectorAll('.user');
+          for(var i=0;i<users.length;i++){ removeClass(users[i], 'selected'); }
+          showNextQuestion();
+        }, 3000);
+      }else{
+        sounds['wrong'].play();
+        if(gameObjects[i].points > 0){ gameObjects[i].points--; }
+        var users = document.querySelectorAll('.user');
+        for(var i=0;i<users.length;i++){ removeClass(users[i], 'selected'); }
+        gameState.state = 'openQuestion';
+      }
+
+    });
+
+  };
+
+
+</script>
+</body>
+</html>

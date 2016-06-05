@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name='viewport' content='user-scalable=no, width=device-width, initial-scale=1.0, maximum-scale=1.0' />
+<title>quizbuzzer</title>
+<style>
+  * { margin: 0; box-sizing: border-box; }
+  html, body { overflow: hidden; }
+  button { font-weight: bold; font-family: arial; font-size: 2em; color: #191816;}
+  .answer-btn { position: absolute; width: 50vw; height: 50vh; background: #809BCE; color: #191816; }
+  #choice-btn-0 { left: 0; top: 0; }
+  #choice-btn-1 { left: 50vw; top: 0; }
+  #choice-btn-2 { left: 0; top: 50vh; }
+  #choice-btn-3 { left: 50vw; top: 50vh; }
+  #buzzer-btn {
+    position: absolute; left: 0; top: 0; width: 100vw; height: 100vh;
+    background: #F07D5A; color: #191816; z-index: 99; border-radius: 4vw;
+    visibility: visible;
+  }
+
+</style>
+</head>
+<body>
+
+<button class='answer-btn' id='choice-btn-0'></button>
+<button class='answer-btn' id='choice-btn-1'></button>
+<button class='answer-btn' id='choice-btn-2'></button>
+<button class='answer-btn' id='choice-btn-3'></button>
+<button id='buzzer-btn'>BUZZ!</button>
+
+<script src="../settings.js"></script>
+<script src="../chansock.js"></script>
+
+<script>
+  var sock = createChannelSocket();
+  var settingsHelper = SettingsHelper({buttonPosition: 'lowerRight'});
+
+  sock.onopen = function(){
+    console.log('connected');
+    var username = settingsHelper.getSetting('username');
+    if(username) sock.send( {username: username}, 'username');
+
+    sock.on('buzzResult', function(d,f,c,u){
+      console.log('buzzResult', d,f,c,u);
+      if(d.buzzedFirst == u){
+        console.log('you won the buzzing round');
+        //window.navigator.vibrate(100);
+        for(var i=0; i<4;i++){
+          document.getElementById('choice-btn-'+i).innerText = '';
+          document.getElementById('choice-btn-'+i).disabled = true;
+        }
+        for(var i=0; i<d.choices.length; i++){
+          document.getElementById('choice-btn-'+i).innerText = d.choices[i];
+          document.getElementById('choice-btn-'+i).disabled = false;
+        }
+        document.getElementById('buzzer-btn').style.visibility = "hidden";
+      }else{
+        //disable button for others?
+        console.log('too late');
+      }
+      //do more
+    });
+
+    sock.on('newQuestion', function(d,f,c){
+      console.log('newQuestion', d,f,c);
+      document.getElementById('buzzer-btn').style.visibility = "visible";
+      //do more?
+    });
+  };
+
+  sock.onclose = function(){
+    console.log('disconnected');
+    //TODO release state if it's taken by the guy who reconnected
+  }; // e.g. reload page later
+
+  settingsHelper.addItem('username', function(){
+    var username = settingsHelper.changeSetting('username');
+    if(username !== null){ sock.send({username: username}, 'username') }
+  });
+
+
+  function buzz(e){
+    e.preventDefault();
+    sock.send({}, 'buzz');
+  }
+  document.getElementById('buzzer-btn').addEventListener('click', buzz);
+  document.getElementById('buzzer-btn').addEventListener('touchstart', buzz);
+
+  function answer(e, aid){
+    e.preventDefault();
+    sock.send({answer: e.srcElement.innerText}, 'answer');
+    document.getElementById('buzzer-btn').style.visibility = "visible";
+  }
+  for(var i=0; i<4; i++){
+    document.getElementById('choice-btn-'+i).addEventListener('click', answer);
+    document.getElementById('choice-btn-'+i).addEventListener('touchstart', answer);
+  }
+
+</script>
+
+</body>
+</html>
