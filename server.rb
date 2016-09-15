@@ -83,7 +83,6 @@ get '/:namespace/?' do
                   end
                 end
               else # handle normal channels
-                puts "\n#{[namespace, channel, client_id, data].inspect}\n"
                 deliver(namespace, channel, client_id, data)
               end
             end
